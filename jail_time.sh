@@ -9,14 +9,22 @@
   NC='\033[0m'
 # JAIL directory:
   CHROOT="/jail"
+# SSH Configuration directory:
+  SSH="/etc/ssh/sshd_config"
 #######################################
 
 status () {
-  if [ $? -eq 0 ]; then
+  if [[ $? -eq 0 ]]; then
     printf "${GRN}OK${NC}\n"
   else
     printf "${RED}Failed${NC}\n"
   fi
+}
+
+generate_fail_status ()
+{
+  😞 &> /dev/null
+  status
 }
 
 duplicate_command () {
@@ -29,11 +37,11 @@ duplicate_command () {
   done
 
   # ARCH amd64
-  if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
+  if [[ -f /lib64/ld-linux-x86-64.so.2 ]]; then
     cp --parents /lib64/ld-linux-x86-64.so.2 /$CHROOT
   fi
   # ARCH i386
-  if [ -f  /lib/ld-linux.so.2 ]; then
+  if [[ -f  /lib/ld-linux.so.2 ]]; then
     cp --parents /lib/ld-linux.so.2 /$CHROOT
   fi
   echo -n "Copy linux library: "
@@ -59,7 +67,7 @@ initialize_jail ()
   status
   echo "#-- Copy linux commands to JAIL --#"
   # ---------------- Commands to copy ---------------- #
-  duplicate_command /bin/{ls,pwd,date,cat,rm,vi,mkdir,touch,cp,clear,uname}
+  duplicate_command /bin/{bash,ls,pwd,date,cat,rm,vi,mkdir,touch,cp,clear,uname}
   # -------------------------------------------------- #
   echo -n "Link PASSWD & GROUP: "
   ln -s /etc/{passwd,group} $CHROOT/etc/
@@ -71,9 +79,7 @@ initialize_jail ()
   chmod -R 755 $CHROOT
   status
   echo -n "Add JAIL to SSH Configuration: "
-  SSH="/etc/ssh/sshd_config"
-  [[ $(grep -c "^ChrootDirectory" $SSH) -ne 0 ]] &&
-  [[ $(grep -c "^ChrootDirectory $CHROOT" $SSH) -ne 0 ]] ||
+  [[ $(grep -c "^ChrootDirectory $CHROOT" $SSH) -eq 0 ]] &&
   echo -n "ChrootDirectory $CHROOT" >> $SSH
   status
   echo -e "\e[4mChroot jail is ready. To access it execute: chroot $CHROOT\e[0m"
@@ -90,33 +96,60 @@ update_jail_cmds ()
 
 jail_user ()
 {
-  USERS="$*"
-  SSH="/etc/ssh/sshd_config"
-  if [ $(cat $SSH | grep -e "^Match User *") ];
+  USERS="$(echo $* | sed -e 's/\,/\ /g')"
+  [[ $(grep -c "^Match User*" $SSH) -eq 0 ]] &&
+  echo -e "\nMatch User" >> $SSH
+  for user in $USERS
+  do
+    echo -n "Jail the user $user: "
+    if [[ $(cat /etc/passwd | grep $user) ]] &&
+       [[ $(grep -c "^Match User *$user*" $SSH) -eq 0 ]];
+    then
+      sed -Ei "s/^(Match User .*)/\1,$user/" $SSH &&
+      sed -Ei "s/^(Match User)$/\1 $user/" $SSH &&
+      cp -r /home/$user $CHROOT/home/$user &&
+      chown -R $user:$user $CHROOT/home/$user &&
+      chmod -R 770 $CHROOT/home/$user &&
+      systemctl restart sshd &&
+      status ||
+      generate_fail_status
+    else
+      generate_fail_status
+    fi
+  done
+}
+
+unjail_user ()
+{
+  user="$1"
+  echo -n "Unjail the user $user"
+  if [[ $(grep -c "^Match User *$user*" $SSH) ]];
   then
-    for user in $USERS
-    do
-      
-      sed -i -E "s/^(Match User *)/\1,$user/" $SSH
-      status
-      ln /home/$user $CHROOT/home/$user
-      status
-      chown -R $user:$user $CHROOT/home/$user
-      status
-      chmod -R 770 $CHROOT/home/$user
-      status
-    done
+    sed -Ei "s/^(Match User .*),$user(.*)/\1\2/" $SSH &&
+    sed -Ei "s/^(Match User .*)$user,(.*)/\1\2/" $SSH &&
+    unlink $CHROOT/home/$user &&
+    systemctl restart sshd &&
+    status ||
+    generate_fail_status
   else
-    echo "Match User $USERS" >> $SSH
-    status
+    generate_fail_status
   fi
 }
 
 usage ()
 {
   printf "
-    Hi World
-  "
+Usage: jail [OPTION]... [PARAMETERS]...
+Manage JAIL concept in ssh by initializing the environment, updating cmd tools, and jailing/unjailing users.
+
+Mandatory arguments:
+-j, --jail \t\t Jail a user/users.
+Example:
+jail -j user1,user2
+-u, --unjail \t\t Unjail one user.
+-x, --execute \t init \t Initialize Jail environment.
+              \t update\t Update shell commands in jail environment.
+"
 }
 
 invalid_option ()
@@ -127,11 +160,12 @@ invalid_option ()
 main ()
 {
   case $1 in
-    -a|--add) jail_user "${@:2}" ;;
-    -d|--delete) unjail_user "${@:2}" ;;
-    -c) ( [[ "$2" -eq "init" ]] && initialize_jail ) ||
-        ( [[ "$2" -eq "init" ]] && initialize_jail ) ||
-        invalid_option ;;
+    -j|--jail) jail_user "${@:2}" ;;
+    -u|--unjail) unjail_user "${@:2}" ;;
+    -x|--execute)
+      ( [[ "$2" -eq "init" ]] && initialize_jail ) ||
+      ( [[ "$2" -eq "update" ]] && update_jail_cmds ) ||
+      invalid_option ;;
     *) invalid_option ;;
   esac
 }
