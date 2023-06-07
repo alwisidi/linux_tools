@@ -9,10 +9,6 @@
   NC='\033[0m'
 # JAIL directory:
   CHROOT="/jail"
-# USERS TO JAIL:
-# Example syntax
-# USERS=("EMK00001" "EMK00002" "EMK00003")
-  USERS="TEST-1"
 #######################################
 
 status () {
@@ -76,18 +72,11 @@ initialize_jail ()
   status
   echo -n "Add JAIL to SSH Configuration: "
   SSH="/etc/ssh/sshd_config"
-  if [ $(cat $SSH | grep -e "^ChrootDirectory") -eq "" ];
-  then
-    echo -n "ChrootDirectory $CHROOT" >> $SSH
-    status
-  else
-    if [ $(cat $SSH | grep -e "^ChrootDirectory $CHROOT") -eq "" ];
-    then
-      echo -n "ChrootDirectory $CHROOT" >> $SSH
-      status
-    fi
-  fi
-  echo "Chroot jail is ready. To access it execute: chroot $CHROOT"
+  [[ $(grep -c "^ChrootDirectory" $SSH) -ne 0 ]] &&
+  [[ $(grep -c "^ChrootDirectory $CHROOT" $SSH) -ne 0 ]] ||
+  echo -n "ChrootDirectory $CHROOT" >> $SSH
+  status
+  echo -e "\e[4mChroot jail is ready. To access it execute: chroot $CHROOT\e[0m"
 }
 
 update_jail_cmds ()
@@ -99,14 +88,15 @@ update_jail_cmds ()
   done
 }
 
-jail_users ()
+jail_user ()
 {
-  echo -n "Add USERS to SSH Configuration: "
+  USERS="$*"
   SSH="/etc/ssh/sshd_config"
   if [ $(cat $SSH | grep -e "^Match User *") ];
   then
     for user in $USERS
     do
+      
       sed -i -E "s/^(Match User *)/\1,$user/" $SSH
       status
       ln /home/$user $CHROOT/home/$user
@@ -122,18 +112,28 @@ jail_users ()
   fi
 }
 
-main ()
+usage ()
 {
-  echo -e "1. Initialize JAIL\n2. Update JAIL commands\n3. JAIL users\nq. Quit"
-  read -p "Choose an option [?]: " job
-  case $job in
-    1) initialize_jail ;;
-    2) update_jail_cmds ;;
-    3) jail_users ;;
-    q) echo " quitting.." && exit ;;
-    *) echo "Sorry, invalid option! Try again." main ;;
-  esac
-  echo " quitting.."
+  printf "
+    Hi World
+  "
 }
 
-main
+invalid_option ()
+{
+  echo "Invalid Option!" && usage
+}
+
+main ()
+{
+  case $1 in
+    -a|--add) jail_user "${@:2}" ;;
+    -d|--delete) unjail_user "${@:2}" ;;
+    -c) ( [[ "$2" -eq "init" ]] && initialize_jail ) ||
+        ( [[ "$2" -eq "init" ]] && initialize_jail ) ||
+        invalid_option ;;
+    *) invalid_option ;;
+  esac
+}
+
+main $*
