@@ -99,6 +99,7 @@ jail_user ()
   USERS="$(echo $* | sed -e 's/\,/\ /g')"
   [[ $(grep -c "^Match User*" $SSH) -eq 0 ]] &&
   echo -e "\nMatch User" >> $SSH
+  # TODO: if a user partial of another user exist in sshd, it won't add it
   for user in $USERS
   do
     echo -n "Jail the user $user: "
